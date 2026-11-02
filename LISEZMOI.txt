@@ -1,0 +1,80 @@
+MON PATRIMOINE, VERSION AUTONOME
+================================
+
+Ce dossier contient l'application complète. Une fois déposée sur un
+hébergement gratuit, elle s'installe sur le téléphone comme une app,
+fonctionne sans connexion et ne dépend plus de Claude.
+
+Vos données ne sont jamais dans ce dossier ni sur l'hébergement : elles
+restent dans le stockage du téléphone.
+
+
+1. AVANT TOUT : SAUVEGARDER VOS DONNÉES
+----------------------------------------
+Dans la version actuelle (ouverte depuis Claude), onglet Profil :
+« Exporter une sauvegarde ». Gardez ce fichier : la nouvelle application
+démarre vide et c'est lui qui permettra de tout récupérer.
+
+
+2. METTRE L'APPLICATION EN LIGNE (GitHub Pages, gratuit)
+---------------------------------------------------------
+Plus confortable depuis un ordinateur, mais faisable sur téléphone.
+
+a. Créez un compte gratuit sur https://github.com
+b. Bouton « + » en haut, puis « New repository ».
+   Nom : patrimoine   Visibilité : Public   puis « Create repository ».
+c. Cliquez sur « uploading an existing file » (ou Add file > Upload files).
+   Déposez les fichiers de ce dossier, pas le fichier zip :
+     index.html, manifest.webmanifest, sw.js
+     icon-192.png, icon-512.png, icon-maskable-192.png,
+     icon-maskable-512.png, apple-touch-icon.png
+   puis « Commit changes ».
+d. Onglet Settings, puis Pages dans le menu de gauche.
+   Source : « Deploy from a branch »
+   Branch : main   dossier : / (root)   puis « Save ».
+e. Patientez une à deux minutes. Votre adresse sera :
+     https://VOTRE-NOM-GITHUB.github.io/patrimoine/
+
+Le dépôt étant public, n'importe qui peut voir le code de l'application,
+mais pas vos données : elles ne quittent jamais votre téléphone.
+
+
+3. INSTALLER L'APPLICATION SUR LE TÉLÉPHONE
+-------------------------------------------
+a. Ouvrez votre adresse dans Chrome.
+b. Menu ⋮ puis « Installer l'application » (ou « Ajouter à l'écran
+   d'accueil »). L'onglet Profil propose aussi un bouton d'installation.
+c. L'icône apparaît avec vos autres applications.
+
+
+4. RÉCUPÉRER VOS DONNÉES
+------------------------
+Ouvrez l'application installée, onglet Profil :
+« Restaurer une sauvegarde », puis choisissez le fichier exporté à l'étape 1.
+Vérifiez vos supports, relevés et versements, puis exportez une première
+sauvegarde depuis la nouvelle application.
+
+
+AU QUOTIDIEN
+------------
+- Ouvrez toujours l'application depuis son icône.
+- Exportez une sauvegarde après chaque relevé, et rangez-la hors du
+  téléphone (le bouton « Envoyer une sauvegarde » permet de l'expédier
+  par e-mail ou vers un stockage en ligne).
+- Désinstaller l'application ou effacer les données de Chrome pour ce
+  site efface tout : seule une sauvegarde vous protège.
+
+
+METTRE À JOUR L'APPLICATION
+---------------------------
+Remplacez index.html dans le dépôt GitHub (Add file > Upload files).
+La nouvelle version s'affiche au deuxième lancement de l'application.
+Vos données ne sont pas touchées.
+
+
+OBTENIR UN FICHIER APK (FACULTATIF)
+-----------------------------------
+L'installation par Chrome suffit pour un usage personnel. Si vous tenez
+à un fichier APK, le site https://www.pwabuilder.com en génère un à
+partir de votre adresse. Hébergée dans un sous-dossier de github.io,
+l'application ainsi empaquetée affichera une barre d'adresse en haut.
