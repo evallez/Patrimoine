@@ -600,7 +600,8 @@ function normalize(s){
     })).sort(parDate) : [];
   const flux = Array.isArray(s.flux) ? s.flux
     .filter(f => f && VALID_ISO.test(f.date) && TYPE[f.type] && Number(f.montant))
-    .map(f => ({ id:String(f.id || newId()), ligneId:String(f.ligneId || ""), nom:String(f.nom || TYPE[f.type].label).slice(0, 80), type:f.type, date:f.date, montant:Number(f.montant), source: f.source === "programme" ? "programme" : "ponctuel", applique: !!f.applique }))
+    .map(f => ({ id:String(f.id || newId()), ligneId:String(f.ligneId || ""), nom:String(f.nom || TYPE[f.type].label).slice(0, 80), type:f.type, date:f.date, montant:Number(f.montant), source: f.source === "programme" ? "programme" : "ponctuel", applique: !!f.applique,
+      relevesCorriges: Array.isArray(f.relevesCorriges) ? f.relevesCorriges.map(String) : [] }))
     .sort(parDate) : [];
   return { version:1, lignes, profil:p, releves, flux, updatedAt:Number(s.updatedAt) || 0 };
 }
@@ -649,7 +650,7 @@ function commit(opts = {}){
   if (opts.render !== false) render();
 }
 
-const APP_VERSION = "1.0";
+const APP_VERSION = "1.1";
 
 /* Installation */
 let installEvt = null;
@@ -1014,8 +1015,16 @@ function sommeFlux(id, apres, jusqua){
 function supprimerFlux(id){
   const f = state.flux.find(x => x.id === id); if (!f) return;
   const l = state.lignes.find(x => x.id === f.ligneId);
-  const dr = dernierReleveAvec(f.ligneId);
-  if (f.applique && l && (!dr || f.date > dr)) l.montant = Math.max(0, l.montant - f.montant);
+  const corr = f.relevesCorriges || [];
+  corr.forEach(rid => {
+    const r = state.releves.find(x => x.id === rid);
+    const x = r && r.lignes.find(y => y.id === f.ligneId);
+    if (x) x.montant = Math.max(0, x.montant - f.montant);
+  });
+  if (f.applique && l) {
+    const ulterieurs = state.releves.filter(r => r.date >= f.date && r.lignes.some(y => y.id === f.ligneId) && !corr.includes(r.id));
+    if (!ulterieurs.length) l.montant = Math.max(0, l.montant - f.montant);
+  }
   state.flux = state.flux.filter(x => x.id !== id);
   commit();
   rafraichirFiche(f.ligneId);
@@ -1832,13 +1841,9 @@ function openReleve(id){
     <p class="hint">${edit ? "Corrigez la date ou les montants de ce relevé." : rel.lignes.some(l => l.estime)
       ? "Montants pré-remplis avec vos valeurs actuelles, versements programmés compris : remplacez-les par la valeur réelle de chaque support."
       : "Montants pré-remplis avec vos valeurs actuelles : modifiez seulement ceux qui ont changé."}</p>
-    ${edit ? "" : `<p class="help">Un versement ponctuel ou un retrait depuis le dernier relevé ? <button class="link" data-rel="mvt">Notez-le d’abord</button> pour qu’il ne soit pas compté comme un gain.</p>`}
+    ${edit ? "" : `<p class="help">Un versement ponctuel ou un retrait depuis le dernier relevé ? <button class="link" data-rel="mvt">Notez-le d’abord</button> : il sera ajouté au montant pré-rempli et ne sera pas compté comme un gain.</p>`}
     <div class="rl-list">${rel.lignes.map((l, i) => `<div class="rl-row">
-      <label class="rl-nom" for="r-m-${i}">${esc(l.nom)}<span>${[
-        l.prev !== undefined ? `Relevé précédent : ${fmt(l.prev)}` : rel.aPrecedent ? "Absent du relevé précédent" : "Premier relevé",
-        Math.round(l.fluxDepuis) ? `${l.fluxDepuis > 0 ? "versé" : "retiré"} depuis : ${fmt(Math.abs(l.fluxDepuis))}` : "",
-        l.estime ? "montant estimé" : ""
-      ].filter(Boolean).join(", ")}</span></label>
+      <label class="rl-nom" for="r-m-${i}">${esc(l.nom)}<span id="r-s-${i}">${rlSous(l)}</span></label>
       <div class="affix"><input type="text" id="r-m-${i}" data-ri="${i}" inputmode="decimal" autocomplete="off" value="${esc(l.montant.toLocaleString("fr-FR", { maximumFractionDigits:2 }))}"><span>€</span></div>
     </div>`).join("")}</div>
     <div class="rl-foot">
@@ -1849,6 +1854,13 @@ function openReleve(id){
     </div>`;
   releveEl.showModal();
   releveEl.scrollTop = 0;
+}
+function rlSous(l){
+  return [
+    l.prev !== undefined ? `Relevé précédent : ${fmt(l.prev)}` : rel.aPrecedent ? "Absent du relevé précédent" : "Premier relevé",
+    Math.round(l.fluxDepuis) ? `${l.fluxDepuis > 0 ? "versé" : "retiré"} depuis : ${fmt(Math.abs(l.fluxDepuis))}` : "",
+    l.estime ? "montant estimé" : ""
+  ].filter(Boolean).join(", ");
 }
 function montantsReleve(){
   return rel.lignes.map((l, i) => { const inp = $("#r-m-" + i); const v = parseNum(inp.value); return { inp, v, ok: inp.value.trim() !== "" && v >= 0 }; });
@@ -1906,12 +1918,17 @@ const mvtEl = $("#mvt");
 let mvt = null;
 function openMvt(ligneId, ctx){
   if (!state.lignes.length) { toast("Ajoutez d’abord vos supports"); return; }
-  mvt = { ctx, sens:"versement" };
+  mvt = { ctx, sens:"versement", inclus:null };
   const familles = [...new Set(TYPES.map(t => t.group))];
   const options = familles.map(f => {
     const ls = state.lignes.filter(l => TYPE[l.type].group === f);
     return ls.length ? `<optgroup label="${esc(f)}">${ls.map(l => `<option value="${esc(l.id)}"${l.id === ligneId ? " selected" : ""}>${esc(nomLigne(l))}</option>`).join("")}</optgroup>` : "";
   }).join("");
+  let min = "";
+  if (ctx === "releve") {
+    const dr = dernierReleve();
+    if (dr) min = dr.date >= todayIso() ? todayIso() : avancerJours(dr.date, 1);
+  }
   $("#mvt-inner").innerHTML = `
     <div class="grabber" aria-hidden="true"></div>
     <div class="sheet-head"><h2 id="mvt-title">Versement ou retrait</h2><button class="icon-btn" data-mvt="close" aria-label="Fermer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
@@ -1919,56 +1936,108 @@ function openMvt(ligneId, ctx){
     <div class="field"><span class="label" id="m-sens-label">Opération</span>
       <div class="seg seg--lg" role="group" aria-labelledby="m-sens-label"><button type="button" data-sens="versement" aria-pressed="true">Versement</button><button type="button" data-sens="retrait" aria-pressed="false">Retrait</button></div></div>
     <div class="field"><label for="m-montant">Montant</label><div class="affix"><input type="text" id="m-montant" inputmode="decimal" autocomplete="off" placeholder="0"><span>€</span></div></div>
-    <div class="field"><label for="m-date">Date</label><input type="date" id="m-date" value="${todayIso()}" max="${todayIso()}"></div>
-    ${ctx === "releve"
-      ? `<p class="help" style="margin-top:14px">Le mouvement sert au calcul de vos gains. Saisissez ensuite la valeur réelle du support dans le relevé.</p>`
-      : `<div class="field"><label class="switch-row" for="m-maj"><span>Mettre à jour le montant actuel du support</span><input type="checkbox" class="switch" id="m-maj"></label><p class="help" id="m-maj-help"></p></div>`}
+    <div class="field"><label for="m-date">Date</label><input type="date" id="m-date" value="${todayIso()}" max="${todayIso()}"${min ? ` min="${min}"` : ""}></div>
+    <div id="m-zone"></div>
     <p class="err" id="m-err" hidden></p>
     <div class="sheet-actions"><button class="btn" data-mvt="save">Enregistrer le mouvement</button></div>`;
-  syncMvt();
+  renderMvtZone();
   mvtEl.showModal();
   mvtEl.scrollTop = 0;
 }
-function aideMaj(){
-  const cb = $("#m-maj"), h = $("#m-maj-help"); if (!cb || !h) return;
-  const dr = dernierReleveAvec($("#m-ligne").value), d = $("#m-date").value;
-  h.textContent = cb.checked
-    ? `Le montant du support sera ${mvt.sens === "retrait" ? "diminué" : "augmenté"} d’autant.`
-    : (dr && d <= dr ? `Laissé tel quel : le relevé du ${dateFrIso(dr)} inclut déjà ce mouvement.` : "Le montant actuel ne change pas : utile s’il inclut déjà ce mouvement.");
+function avancerJours(iso, n){ const d = isoToDate(iso); d.setDate(d.getDate() + n); return isoDe(d); }
+function relevesConcernes(){
+  const id = $("#m-ligne").value, d = $("#m-date").value;
+  if (!VALID_ISO.test(d)) return [];
+  return state.releves.filter(r => r.date >= d && r.lignes.some(x => x.id === id));
 }
-function syncMvt(){
-  const cb = $("#m-maj"); if (!cb) return;
-  const dr = dernierReleveAvec($("#m-ligne").value), d = $("#m-date").value;
-  cb.checked = !dr || d > dr;
-  aideMaj();
+function renderMvtZone(){
+  const z = $("#m-zone"); if (!z) return;
+  const ret = mvt.sens === "retrait", ce = ret ? "ce retrait" : "ce versement";
+  if (mvt.ctx === "releve") {
+    z.innerHTML = `<p class="help" style="margin-top:14px">Le montant sera ${ret ? "retiré du" : "ajouté au"} montant pré-rempli de ce support dans le relevé en cours. Vérifiez ensuite qu’il correspond à la valeur réelle.</p>`;
+    return;
+  }
+  const R = relevesConcernes();
+  if (R.length) {
+    const q = R.length === 1
+      ? `Le relevé du ${dateFrIso(R[0].date)} inclut-il déjà ${ce} ?`
+      : `Vos ${R.length} relevés depuis le ${dateFrIso(R[0].date)} incluent-ils déjà ${ce} ?`;
+    const aide = mvt.inclus === "oui"
+      ? `Rien ne change : ${R.length === 1 ? "le relevé contient" : "les relevés contiennent"} déjà ce montant.`
+      : mvt.inclus === "non"
+        ? `Le montant sera ${ret ? "retiré du" : "ajouté au"} ${R.length === 1 ? "relevé" : "relevés"} et au solde actuel du support.`
+        : `Répondez pour que vos gains restent justes. En cas de doute, comparez le montant du relevé avec votre banque.`;
+    z.innerHTML = `<div class="field"><span class="label" id="m-incl-label">${q}</span>
+      <div class="seg seg--lg" role="group" aria-labelledby="m-incl-label"><button type="button" data-incl="oui" aria-pressed="${mvt.inclus === "oui"}">Oui, déjà compté</button><button type="button" data-incl="non" aria-pressed="${mvt.inclus === "non"}">Non, l’ajouter</button></div>
+      <p class="help">${aide}</p></div>`;
+  } else {
+    const coche = mvt.maj !== false;
+    z.innerHTML = `<div class="field"><label class="switch-row" for="m-maj"><span>Mettre à jour le montant actuel du support</span><input type="checkbox" class="switch" id="m-maj"${coche ? " checked" : ""}></label>
+      <p class="help">${coche ? `Le montant du support sera ${ret ? "diminué" : "augmenté"} d’autant.` : "Le montant actuel ne change pas : à choisir seulement s’il inclut déjà ce mouvement."}</p></div>`;
+  }
 }
 mvtEl.addEventListener("click", e => {
   if (e.target === mvtEl) { mvtEl.close(); return; }
   const sb = e.target.closest("[data-sens]");
-  if (sb) { mvt.sens = sb.dataset.sens; mvtEl.querySelectorAll("[data-sens]").forEach(b => b.setAttribute("aria-pressed", String(b === sb))); aideMaj(); return; }
+  if (sb) { mvt.sens = sb.dataset.sens; mvtEl.querySelectorAll("[data-sens]").forEach(b => b.setAttribute("aria-pressed", String(b === sb))); renderMvtZone(); return; }
+  const ib = e.target.closest("[data-incl]");
+  if (ib) { mvt.inclus = ib.dataset.incl; $("#m-err").hidden = true; renderMvtZone(); return; }
   const b = e.target.closest("[data-mvt]"); if (!b) return;
   if (b.dataset.mvt === "close") mvtEl.close();
   else if (b.dataset.mvt === "save") saveMvt();
 });
 mvtEl.addEventListener("change", e => {
-  if (e.target.id === "m-ligne" || e.target.id === "m-date") syncMvt();
-  else if (e.target.id === "m-maj") aideMaj();
+  if (e.target.id === "m-ligne" || e.target.id === "m-date") { mvt.inclus = null; renderMvtZone(); }
+  else if (e.target.id === "m-maj") { mvt.maj = e.target.checked; renderMvtZone(); }
 });
 mvtEl.addEventListener("input", e => { if (e.target.id === "m-montant") $("#m-err").hidden = true; });
 function saveMvt(){
   const l = state.lignes.find(x => x.id === $("#m-ligne").value); if (!l) return;
   const m = parseNum($("#m-montant").value), d = $("#m-date").value, er = $("#m-err");
+  const dateInp = $("#m-date");
   if (!(m > 0)) { er.textContent = "Indiquez un montant supérieur à zéro."; er.hidden = false; $("#m-montant").focus(); return; }
-  if (!VALID_ISO.test(d) || d > todayIso()) { er.textContent = "Choisissez une date passée ou aujourd’hui."; er.hidden = false; return; }
+  if (!VALID_ISO.test(d) || d > todayIso() || (dateInp.min && d < dateInp.min)) {
+    er.textContent = dateInp.min ? `Choisissez une date entre le ${dateFrIso(dateInp.min)} et aujourd’hui.` : "Choisissez une date passée ou aujourd’hui.";
+    er.hidden = false; return;
+  }
   const signe = mvt.sens === "retrait" ? -m : m;
-  const cb = $("#m-maj"), applique = !!(cb && cb.checked);
-  if (applique) l.montant = Math.max(0, l.montant + signe);
-  state.flux.push({ id:newId(), ligneId:l.id, nom:nomLigne(l), type:l.type, date:d, montant:signe, source:"ponctuel", applique });
+  const flux = { id:newId(), ligneId:l.id, nom:nomLigne(l), type:l.type, date:d, montant:signe, source:"ponctuel", applique:false, relevesCorriges:[] };
+  let msg = mvt.sens === "retrait" ? "Retrait noté" : "Versement noté";
+
+  if (mvt.ctx === "releve") {
+    const i = rel ? rel.lignes.findIndex(x => x.id === l.id) : -1;
+    if (i >= 0) {
+      const inp = $("#r-m-" + i), cur = parseNum(inp.value);
+      const nv = Math.max(0, (cur >= 0 ? cur : rel.lignes[i].montant) + signe);
+      inp.value = nv.toLocaleString("fr-FR", { maximumFractionDigits:2 });
+      inp.classList.remove("invalid");
+      rel.lignes[i].fluxDepuis = (rel.lignes[i].fluxDepuis || 0) + signe;
+      const sp = $("#r-s-" + i); if (sp) sp.textContent = rlSous(rel.lignes[i]);
+      inp.dispatchEvent(new Event("input", { bubbles:true }));
+      msg += ", montant du relevé ajusté";
+    }
+  } else {
+    const R = relevesConcernes();
+    if (R.length) {
+      if (!mvt.inclus) { er.textContent = `Indiquez si ${R.length === 1 ? "le relevé inclut" : "les relevés incluent"} déjà ce mouvement.`; er.hidden = false; return; }
+      if (mvt.inclus === "non") {
+        R.forEach(r => { const x = r.lignes.find(y => y.id === l.id); if (x) x.montant = Math.max(0, x.montant + signe); });
+        flux.relevesCorriges = R.map(r => r.id);
+        l.montant = Math.max(0, l.montant + signe);
+        flux.applique = true;
+        msg += `, solde et ${R.length === 1 ? "relevé mis" : "relevés mis"} à jour`;
+      }
+    } else if (mvt.maj !== false) {
+      l.montant = Math.max(0, l.montant + signe);
+      flux.applique = true;
+    }
+  }
+  state.flux.push(flux);
   state.flux.sort(parDate);
   mvtEl.close();
   commit();
   rafraichirFiche(l.id);
-  toast(mvt.sens === "retrait" ? "Retrait noté" : "Versement noté");
+  toast(msg);
 }
 
 /* ---------- Démarrage ---------- */
