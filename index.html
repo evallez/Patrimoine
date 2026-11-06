@@ -650,7 +650,7 @@ function commit(opts = {}){
   if (opts.render !== false) render();
 }
 
-const APP_VERSION = "1.1";
+const APP_VERSION = "1.2";
 
 /* Installation */
 let installEvt = null;
@@ -984,6 +984,7 @@ const pctSigne = t => (t > 0.0005 ? "+" : t < -0.0005 ? "\u2212" : "") + dec(Mat
 const clsTaux = t => t > 0.0005 ? "delta-pos" : t < -0.0005 ? "delta-neg" : "";
 const joinFr = a => a.length <= 1 ? (a[0] || "") : a.slice(0, -1).join(", ") + " et " + a[a.length - 1];
 const labelFlux = f => f.source === "programme" ? "Versement programmé" : f.montant < 0 ? "Retrait" : "Versement ponctuel";
+const nonApplique = f => f.source === "ponctuel" && !f.applique;
 const versementActif = v => v && (!v.fin || v.prochain <= v.fin);
 
 function appliquerVersements(){
@@ -1191,7 +1192,10 @@ const VIEWS = {
     const F = fluxFiltres();
     const last = R[R.length - 1], prev = R.length > 1 ? R[R.length - 2] : null;
     const head = `<header class="hero head-row"><div><h1 class="page-title">Évolution</h1><p class="total" style="font-size:2rem">${fmt(last.total)}</p></div><button class="btn btn--sm" data-action="releve-new">Faire un relevé</button></header>
-      <p class="total-sub">Au relevé du ${dateFrIso(last.date)}${!state.profil.inclureRP && state.lignes.some(l => l.type === "rp") ? ", hors résidence principale" : ""}</p>`;
+      <p class="total-sub">Au relevé du ${dateFrIso(last.date)}${!state.profil.inclureRP && state.lignes.some(l => l.type === "rp") ? ", hors résidence principale" : ""}${(() => {
+        const actuel = somme(state.lignes.filter(l => state.profil.inclureRP || l.type !== "rp"));
+        return Math.round(actuel) !== Math.round(last.total) ? `. Solde actuel : ${fmt(actuel)}, mouvements depuis compris.` : "";
+      })()}</p>`;
 
     let stats, ivLast = null;
     if (prev) {
@@ -1274,7 +1278,7 @@ const VIEWS = {
     const visibles = ui.fluxAll ? Fd : Fd.slice(0, 6);
     const mouvements = `<h2 class="section-title">Versements et retraits</h2>
       ${F.length ? `<p class="evo-fluxsum">Depuis le 1er janvier : ${fmt(verses)} versés${retires ? `, ${fmt(retires)} retirés` : ""}.</p>
-      <ul class="mv-list">${visibles.map(f => `<li><button class="mv-row" data-action="flux-open" data-id="${esc(f.ligneId)}"><span><span class="mv-nom">${esc(f.nom)}</span><span class="mv-meta">${dateFrIso(f.date)}, ${labelFlux(f).toLowerCase()}</span></span><span class="mv-mt">${fmtSigne(f.montant)}</span></button></li>`).join("")}</ul>
+      <ul class="mv-list">${visibles.map(f => `<li><button class="mv-row" data-action="flux-open" data-id="${esc(f.ligneId)}"><span><span class="mv-nom">${esc(f.nom)}</span><span class="mv-meta">${dateFrIso(f.date)}, ${labelFlux(f).toLowerCase()}${nonApplique(f) ? ", solde non modifié" : ""}</span></span><span class="mv-mt">${fmtSigne(f.montant)}</span></button></li>`).join("")}</ul>
       ${Fd.length > 6 ? `<p class="foot-hint"><button class="link" data-action="flux-all">${ui.fluxAll ? "Afficher les plus récents" : `Afficher les ${Fd.length} mouvements`}</button></p>` : ""}`
       : `<p class="evo-fluxsum">Aucun mouvement noté. Les versements programmés s’ajoutent ici automatiquement ; notez aussi vos versements ponctuels et vos retraits pour mesurer vos gains réels.</p>`}
       <button class="btn btn--ghost btn--wide" style="margin-top:12px" data-action="mvt-new">Noter un versement ou un retrait</button>`;
@@ -1736,7 +1740,7 @@ function renderSheetFlux(){
   zone.hidden = false;
   const F = state.flux.filter(f => f.ligneId === edit.id).sort((a, b) => parDate(b, a));
   $("#f-flux").innerHTML = F.length
-    ? F.slice(0, 6).map(f => `<li><span class="flux-date">${dateFrIso(f.date)}<span>${labelFlux(f)}</span></span><span class="flux-mt">${fmtSigne(f.montant)}</span><button type="button" class="flux-del" data-sheet="flux-del" data-id="${esc(f.id)}">Retirer</button></li>`).join("")
+    ? F.slice(0, 6).map(f => `<li><span class="flux-date">${dateFrIso(f.date)}<span>${labelFlux(f)}${nonApplique(f) ? ", solde non modifié" : ""}</span></span><span class="flux-mt">${fmtSigne(f.montant)}</span><button type="button" class="flux-del" data-sheet="flux-del" data-id="${esc(f.id)}">Retirer</button></li>`).join("")
       + (F.length > 6 ? `<li class="flux-more">Et ${F.length - 6} plus anciens, visibles dans l’onglet Évolution.</li>` : "")
     : `<li class="flux-empty">Aucun mouvement noté sur ce support.</li>`;
 }
@@ -1954,26 +1958,27 @@ function renderMvtZone(){
   const z = $("#m-zone"); if (!z) return;
   const ret = mvt.sens === "retrait", ce = ret ? "ce retrait" : "ce versement";
   if (mvt.ctx === "releve") {
-    z.innerHTML = `<p class="help" style="margin-top:14px">Le montant sera ${ret ? "retiré du" : "ajouté au"} montant pré-rempli de ce support dans le relevé en cours. Vérifiez ensuite qu’il correspond à la valeur réelle.</p>`;
+    z.innerHTML = `<p class="help" style="margin-top:14px">Le montant sera ${ret ? "déduit du" : "ajouté au"} solde du support et au montant pré-rempli dans le relevé en cours. Vérifiez ensuite qu’il correspond à la valeur réelle.</p>`;
     return;
   }
   const R = relevesConcernes();
   if (R.length) {
+    const nom = nomLigne(state.lignes.find(x => x.id === $("#m-ligne").value));
     const q = R.length === 1
-      ? `Le relevé du ${dateFrIso(R[0].date)} inclut-il déjà ${ce} ?`
-      : `Vos ${R.length} relevés depuis le ${dateFrIso(R[0].date)} incluent-ils déjà ${ce} ?`;
+      ? `Vous avez fait un relevé le ${dateFrIso(R[0].date)}. Le montant qu’il indique pour ${nom} tient-il déjà compte de ${ce} ?`
+      : `Vous avez fait ${R.length} relevés depuis le ${dateFrIso(R[0].date)}. Leurs montants pour ${nom} tiennent-ils déjà compte de ${ce} ?`;
     const aide = mvt.inclus === "oui"
-      ? `Rien ne change : ${R.length === 1 ? "le relevé contient" : "les relevés contiennent"} déjà ce montant.`
+      ? `Rien ne change : ni ${R.length === 1 ? "le relevé" : "les relevés"}, ni le solde actuel. Le mouvement sert seulement au calcul de vos gains.`
       : mvt.inclus === "non"
-        ? `Le montant sera ${ret ? "retiré du" : "ajouté au"} ${R.length === 1 ? "relevé" : "relevés"} et au solde actuel du support.`
-        : `Répondez pour que vos gains restent justes. En cas de doute, comparez le montant du relevé avec votre banque.`;
+        ? `Le montant sera ${ret ? "déduit du" : "ajouté au"} solde actuel et ${R.length === 1 ? "au relevé" : "aux relevés"}.`
+        : `Si vous venez de faire ce ${ret ? "retrait" : "versement"} et n’avez pas modifié ${R.length === 1 ? "le relevé" : "les relevés"} depuis, répondez Non.`;
     z.innerHTML = `<div class="field"><span class="label" id="m-incl-label">${q}</span>
-      <div class="seg seg--lg" role="group" aria-labelledby="m-incl-label"><button type="button" data-incl="oui" aria-pressed="${mvt.inclus === "oui"}">Oui, déjà compté</button><button type="button" data-incl="non" aria-pressed="${mvt.inclus === "non"}">Non, l’ajouter</button></div>
+      <div class="seg seg--lg" role="group" aria-labelledby="m-incl-label"><button type="button" data-incl="non" aria-pressed="${mvt.inclus === "non"}">Non, ${ret ? "à déduire" : "à ajouter"}</button><button type="button" data-incl="oui" aria-pressed="${mvt.inclus === "oui"}">Oui, ${ret ? "déjà déduit" : "déjà compté"}</button></div>
       <p class="help">${aide}</p></div>`;
   } else {
     const coche = mvt.maj !== false;
-    z.innerHTML = `<div class="field"><label class="switch-row" for="m-maj"><span>Mettre à jour le montant actuel du support</span><input type="checkbox" class="switch" id="m-maj"${coche ? " checked" : ""}></label>
-      <p class="help">${coche ? `Le montant du support sera ${ret ? "diminué" : "augmenté"} d’autant.` : "Le montant actuel ne change pas : à choisir seulement s’il inclut déjà ce mouvement."}</p></div>`;
+    z.innerHTML = `<div class="field"><label class="switch-row" for="m-maj"><span>Mettre à jour le solde du support</span><input type="checkbox" class="switch" id="m-maj"${coche ? " checked" : ""}></label>
+      <p class="help">${coche ? `Le solde du support sera ${ret ? "diminué" : "augmenté"} d’autant.` : "Le solde actuel ne change pas : à choisir seulement s’il tient déjà compte de ce mouvement."}</p></div>`;
   }
 }
 mvtEl.addEventListener("click", e => {
@@ -2014,8 +2019,10 @@ function saveMvt(){
       rel.lignes[i].fluxDepuis = (rel.lignes[i].fluxDepuis || 0) + signe;
       const sp = $("#r-s-" + i); if (sp) sp.textContent = rlSous(rel.lignes[i]);
       inp.dispatchEvent(new Event("input", { bubbles:true }));
-      msg += ", montant du relevé ajusté";
-    }
+      msg += ", solde et relevé ajustés";
+    } else msg += ", solde ajusté";
+    l.montant = Math.max(0, l.montant + signe);
+    flux.applique = true;
   } else {
     const R = relevesConcernes();
     if (R.length) {
